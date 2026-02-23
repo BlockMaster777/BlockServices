@@ -1,25 +1,136 @@
 # coding=utf-8
 import sqlite3
+import base64
 from typing import Any
 
+class ProjectDontExist(Exception):
+    pass
+
+class UserDontExist(Exception):
+    pass
+
+class UserAlreadyExists(Exception):
+    pass
 
 class DBM:
-    def __init__(self, db_file="db.db") -> None:
+    def __init__(self, db_file: str="db.db", projects_path: str="projects/project_") -> None:
         self.db_file = db_file
+        self.projects_path = projects_path
+        self.__create_tables()
+
+    def __cursor_and_connection(self) -> tuple[sqlite3.Cursor, sqlite3.Connection]:
+        connection = sqlite3.connect(self.db_file)
+        return connection.cursor(), connection
+
+    def __write_to_file(self, pid: int, data: bytes):
+        with open(self.projects_path + str(pid), "wb+") as f:
+            f.write(data)
+
+    def __read_from_file(self, pid: int) -> bytes:
+        with open(self.projects_path + str(pid), "rb") as f:
+            return f.read()
+
+    def __create_tables(self) -> None:
+        cur, conn = self.__cursor_and_connection()
+        cur.execute("BEGIN TRANSACTION")
+        cur.execute("""CREATE TABLE IF NOT EXISTS projects(
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          name TEXT NOT NULL,
+                          description TEXT,
+                          author_id INTEGER NOT NULL,
+                          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          is_public BOOLEAN NOT NULL DEFAULT FALSE,
+                          FOREIGN KEY(author_id) REFERENCES users(id) ON DELETE CASCADE);""")
+
+        cur.execute("""CREATE TABLE IF NOT EXISTS users(
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          username TEXT NOT NULL UNIQUE,
+                          name TEXT NOT NULL,
+                          email TEXT NOT NULL,
+                          password_hash TEXT NOT NULL,
+                          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                          is_banned BOOLEAN NOT NULL DEFAULT FALSE);""")
+
+        cur.execute("""CREATE TABLE IF NOT EXISTS reactions(
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          type TEXT NOT NULL,
+                          user_id INTEGER NOT NULL,
+                          project_id INTEGER NOT NULL,
+                          UNIQUE(user_id, project_id, type),
+                          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);""")
+
+        cur.execute("""CREATE TABLE IF NOT EXISTS comments(
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user_id INTEGER NOT NULL,
+                          project_id INTEGER NOT NULL,
+                          text TEXT NOT NULL,
+                          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);""")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_reactions_project_id ON reactions(project_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_reactions_project ON reactions(user_id, project_id);")
+        conn.commit()
     
-    @property
-    def __connect(self) -> sqlite3.Connection:
-        with sqlite3.connect(self.db_file) as conn:
-            return conn
+    def does_project_exist(self, project_id: int) -> bool:
+        cur, conn = self.__cursor_and_connection()
+        cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
+        return bool(cur.fetchone())
+
+    def get_project(self, project_id: int) -> dict[str, Any]:
+        cur, conn = self.__cursor_and_connection()
+        cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
+        result = cur.fetchone()
+        cur.execute("""SELECT COUNT(*) FROM reactions
+                           WHERE project_id = ? AND type = ?""", (project_id, "like"))
+        likes = cur.fetchone()[0]
+        cur.execute("""SELECT COUNT(*) FROM reactions
+                           WHERE project_id = ? AND type = ?""", (project_id, "fav"))
+        favorites = cur.fetchone()[0]
+        file = base64.encodebytes(self.__read_from_file(project_id))
+        return {"id": result[0],
+                "name": result[1],
+                "description": result[2],
+                "author_id": result[3],
+                "created_at": result[4],
+                "is_public": result[5],
+                "likes": likes,
+                "favorites": favorites,
+                "file": file}
+
+    def get_user(self, user_id: int) -> dict[str, Any]:
+        cur, conn = self.__cursor_and_connection()
+        cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
+        result = cur.fetchone()
+        return {"id": result[0],
+                "username": result[1],
+                "name": result[2],
+                "email": result[3],
+                "password_hash": result[4],
+                "created_at": result[5],
+                "is_admin": result[6],
+                "is_banned": result[7]}
+
+    def add_project(self, name: str, description: str, author_id: int, file)-> int:
+        cur, conn = self.__cursor_and_connection()
+        cur.execute("BEGIN TRANSACTION")
+        cur.execute("INSERT INTO projects(name, description, author_id) VALUES (?, ?, ?) RETURNING id;",
+                       (name, description, author_id))
+        pid = cur.fetchone()[0]
+        try:
+            self.__write_to_file(pid, file)
+        except Exception as e:
+            cur.execute("ROLLBACK;")
+            raise e
+        else:
+            cur.execute("COMMIT;")
+        return pid
     
-    @property
-    def __cursor(self) -> sqlite3.Cursor:
-        return sqlite3.Cursor(self.__connect)
-    
-    def execute(self, sql, data) -> None:
-        self.__cursor.execute(sql, data)
-    
-    def select(self, sql, data) -> list[Any]:
-        cursor = self.__cursor
-        cursor.execute(sql, data)
-        return cursor.fetchall()
+    def add_user(self, username: str, name: str, password_hash: str, email: str)-> int:
+        cur, conn = self.__cursor_and_connection()
+        cur.execute("BEGIN TRANSACTION")
+        cur.execute("INSERT INTO users(username, name, password_hash, email) VALUES (?, ?, ?, ?) RETURNING id;",
+                    (username, name, password_hash, email))
+        uid = cur.fetchone()[0]
+        conn.commit()
+        return uid
