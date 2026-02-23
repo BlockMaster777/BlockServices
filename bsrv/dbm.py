@@ -3,10 +3,10 @@ import sqlite3
 import base64
 from typing import Any
 
-class ProjectDontExist(Exception):
+class ProjectDoesntExist(Exception):
     pass
 
-class UserDontExist(Exception):
+class UserDoesntExist(Exception):
     pass
 
 class UserAlreadyExists(Exception):
@@ -72,12 +72,24 @@ class DBM:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_reactions_project ON reactions(user_id, project_id);")
         conn.commit()
     
-    def does_project_exist(self, project_id: int) -> bool:
+    def __does_project_exist(self, project_id: int) -> bool:
         cur, conn = self.__cursor_and_connection()
         cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
         return bool(cur.fetchone())
+    
+    def __does_user_exist(self, user_id: int) -> bool:
+        cur, conn = self.__cursor_and_connection()
+        cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
+        return bool(cur.fetchone())
+    
+    def __does_username_exist(self, username: str) -> bool:
+        cur, conn = self.__cursor_and_connection()
+        cur.execute("""SELECT * FROM users WHERE username = ?""", (username,))
+        return bool(cur.fetchone())
 
     def get_project(self, project_id: int) -> dict[str, Any]:
+        if not self.__does_project_exist(project_id):
+            raise ProjectDoesntExist
         cur, conn = self.__cursor_and_connection()
         cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
         result = cur.fetchone()
@@ -99,6 +111,8 @@ class DBM:
                 "file": file}
 
     def get_user(self, user_id: int) -> dict[str, Any]:
+        if not self.__does_user_exist(user_id):
+            raise UserDoesntExist
         cur, conn = self.__cursor_and_connection()
         cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
         result = cur.fetchone()
@@ -127,6 +141,8 @@ class DBM:
         return pid
     
     def add_user(self, username: str, name: str, password_hash: str, email: str)-> int:
+        if self.__does_username_exist(username):
+            raise UserAlreadyExists
         cur, conn = self.__cursor_and_connection()
         cur.execute("BEGIN TRANSACTION")
         cur.execute("INSERT INTO users(username, name, password_hash, email) VALUES (?, ?, ?, ?) RETURNING id;",
