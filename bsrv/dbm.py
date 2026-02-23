@@ -71,82 +71,90 @@ class DBM:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_reactions_project_id ON reactions(project_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_reactions_project ON reactions(user_id, project_id);")
         conn.commit()
+        conn.close()
     
     def __does_project_exist(self, project_id: int) -> bool:
         cur, conn = self.__cursor_and_connection()
-        cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
-        return bool(cur.fetchone())
+        with conn:
+            cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
+            return bool(cur.fetchone())
     
     def __does_user_exist(self, user_id: int) -> bool:
         cur, conn = self.__cursor_and_connection()
-        cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
-        return bool(cur.fetchone())
+        with conn:
+            cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
+            return bool(cur.fetchone())
     
     def __does_username_exist(self, username: str) -> bool:
         cur, conn = self.__cursor_and_connection()
-        cur.execute("""SELECT * FROM users WHERE username = ?""", (username,))
-        return bool(cur.fetchone())
+        with conn:
+            cur.execute("""SELECT * FROM users WHERE username = ?""", (username,))
+            return bool(cur.fetchone())
 
     def get_project(self, project_id: int) -> dict[str, Any]:
         if not self.__does_project_exist(project_id):
             raise ProjectDoesntExist
         cur, conn = self.__cursor_and_connection()
-        cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
-        result = cur.fetchone()
-        cur.execute("""SELECT COUNT(*) FROM reactions
-                           WHERE project_id = ? AND type = ?""", (project_id, "like"))
-        likes = cur.fetchone()[0]
-        cur.execute("""SELECT COUNT(*) FROM reactions
-                           WHERE project_id = ? AND type = ?""", (project_id, "fav"))
-        favorites = cur.fetchone()[0]
-        file = base64.encodebytes(self.__read_from_file(project_id))
-        return {"id": result[0],
-                "name": result[1],
-                "description": result[2],
-                "author_id": result[3],
-                "created_at": result[4],
-                "is_public": result[5],
-                "likes": likes,
-                "favorites": favorites,
-                "file": file}
+        with conn:
+            cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
+            result = cur.fetchone()
+            cur.execute("""SELECT COUNT(*) FROM reactions
+                               WHERE project_id = ? AND type = ?""", (project_id, "like"))
+            likes = cur.fetchone()[0]
+            cur.execute("""SELECT COUNT(*) FROM reactions
+                               WHERE project_id = ? AND type = ?""", (project_id, "fav"))
+            favorites = cur.fetchone()[0]
+            file = base64.encodebytes(self.__read_from_file(project_id))
+            return {"id": result[0],
+                    "name": result[1],
+                    "description": result[2],
+                    "author_id": result[3],
+                    "created_at": result[4],
+                    "is_public": result[5],
+                    "likes": likes,
+                    "favorites": favorites,
+                    "file": file}
 
     def get_user(self, user_id: int) -> dict[str, Any]:
         if not self.__does_user_exist(user_id):
             raise UserDoesntExist
         cur, conn = self.__cursor_and_connection()
-        cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
-        result = cur.fetchone()
-        return {"id": result[0],
-                "username": result[1],
-                "name": result[2],
-                "email": result[3],
-                "password_hash": result[4],
-                "created_at": result[5],
-                "is_admin": result[6],
-                "is_banned": result[7]}
+        with conn:
+            cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
+            result = cur.fetchone()
+            return {"id": result[0],
+                    "username": result[1],
+                    "name": result[2],
+                    "email": result[3],
+                    "password_hash": result[4],
+                    "created_at": result[5],
+                    "is_admin": result[6],
+                    "is_banned": result[7]}
 
     def add_project(self, name: str, description: str, author_id: int, file)-> int:
         cur, conn = self.__cursor_and_connection()
-        cur.execute("BEGIN TRANSACTION")
-        cur.execute("INSERT INTO projects(name, description, author_id) VALUES (?, ?, ?) RETURNING id;",
-                       (name, description, author_id))
-        pid = cur.fetchone()[0]
-        try:
-            self.__write_to_file(pid, file)
-        except Exception as e:
-            cur.execute("ROLLBACK;")
-            raise e
-        else:
-            cur.execute("COMMIT;")
-        return pid
+        with conn:
+            cur.execute("BEGIN TRANSACTION")
+            cur.execute("INSERT INTO projects(name, description, author_id) VALUES (?, ?, ?) RETURNING id;",
+                           (name, description, author_id))
+            pid = cur.fetchone()[0]
+            try:
+                self.__write_to_file(pid, file)
+            except Exception as e:
+                conn.rollback()
+                raise e
+            else:
+                conn.commit()
+            return pid
     
     def add_user(self, username: str, name: str, password_hash: str, email: str)-> int:
         if self.__does_username_exist(username):
             raise UserAlreadyExists
         cur, conn = self.__cursor_and_connection()
-        cur.execute("BEGIN TRANSACTION")
-        cur.execute("INSERT INTO users(username, name, password_hash, email) VALUES (?, ?, ?, ?) RETURNING id;",
-                    (username, name, password_hash, email))
-        uid = cur.fetchone()[0]
-        conn.commit()
-        return uid
+        with conn:
+            cur.execute("BEGIN TRANSACTION")
+            cur.execute("INSERT INTO users(username, name, password_hash, email) VALUES (?, ?, ?, ?) RETURNING id;",
+                        (username, name, password_hash, email))
+            uid = cur.fetchone()[0]
+            conn.commit()
+            return uid
