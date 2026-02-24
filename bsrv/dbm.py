@@ -105,15 +105,15 @@ class DBM:
                                WHERE project_id = ? AND type = ?""", (project_id, "fav"))
             favorites = cur.fetchone()[0]
             file = base64.encodebytes(self.__read_from_file(project_id))
-            return {"id": result[0],
-                    "name": result[1],
-                    "description": result[2],
-                    "author_id": result[3],
-                    "created_at": result[4],
-                    "is_public": result[5],
-                    "likes": likes,
-                    "favorites": favorites,
-                    "file": file}
+        return {"id": result[0],
+                "name": result[1],
+                "description": result[2],
+                "author_id": result[3],
+                "created_at": result[4],
+                "is_public": result[5],
+                "likes": likes,
+                "favorites": favorites,
+                "file": file}
 
     def get_user(self, user_id: int) -> dict[str, Any]:
         if not self.__does_user_exist(user_id):
@@ -122,14 +122,14 @@ class DBM:
         with conn:
             cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
             result = cur.fetchone()
-            return {"id": result[0],
-                    "username": result[1],
-                    "name": result[2],
-                    "email": result[3],
-                    "password_hash": result[4],
-                    "created_at": result[5],
-                    "is_admin": result[6],
-                    "is_banned": result[7]}
+        return {"id": result[0],
+                "username": result[1],
+                "name": result[2],
+                "email": result[3],
+                "password_hash": result[4],
+                "created_at": result[5],
+                "is_admin": result[6],
+                "is_banned": result[7]}
 
     def add_project(self, name: str, description: str, author_id: int, file)-> int:
         cur, conn = self.__cursor_and_connection()
@@ -145,7 +145,7 @@ class DBM:
                 raise e
             else:
                 conn.commit()
-            return pid
+        return pid
     
     def add_user(self, username: str, name: str, password_hash: str, email: str)-> int:
         if self.__does_username_exist(username):
@@ -157,4 +157,16 @@ class DBM:
                         (username, name, password_hash, email))
             uid = cur.fetchone()[0]
             conn.commit()
-            return uid
+        return uid
+    
+    def get_user_id(self, username: str) -> int:
+        if not self.__does_username_exist(username):
+            raise UserDoesntExist
+        cur, conn = self.__cursor_and_connection()
+        with conn:
+            cur.execute("""SELECT id FROM users WHERE username = ?""", (username,))
+            uid = cur.fetchone()[0]
+        return uid
+    
+    def get_user_psw_by_username(self, username: str) -> int:
+        return self.get_user(self.get_user_id(username))["password_hash"]
