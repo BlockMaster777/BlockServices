@@ -90,7 +90,7 @@ async def login(user: UserLogin):
             uid = lg.get_user_id(user.username)
         except UserDoesntExist:
             raise fastapi.HTTPException(status_code=400, detail="User doesn't exist")
-        access_token = lg.create_access_token({"uid": uid}, os.getenv("TOKEN_EXPIRE_MINUTES"), SECRET_KEY)
+        access_token = lg.create_access_token({"uid": uid}, int(os.getenv("TOKEN_EXPIRE_MINUTES")), SECRET_KEY)
         logger.log(20, f"Issued JWT token for {user.username} with id {uid}")
         return {"access_token": access_token, "token_type": "bearer"}
     else:

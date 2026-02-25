@@ -165,6 +165,7 @@ cython_debug/
 db.db
 projects/
 test.py
-/test.db
+test.db
 start.sh
 setup.sh
+.keys/

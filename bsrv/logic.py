@@ -6,7 +6,7 @@ import jwt
 
 dbm = DBM()
 
-def create_access_token(data: dict, expires_time, secret_key)-> str:
+def create_access_token(data: dict, expires_time: int, secret_key: str)-> str:
     to_encode = data.copy()
     expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=expires_time)
     to_encode.update({"exp": expire, "iat": datetime.datetime.now(datetime.timezone.utc), "iss": "blockservices"})
