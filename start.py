@@ -4,7 +4,7 @@ import os
 
 if __name__ == "__main__":
     logger.log(20, "Starting server")
-    if bool(os.getenv("DEBUG", False)):
+    if bool(int(os.getenv("DEBUG", False))):
         logger.log(20, "Debug mode enabled")
         uvicorn.run("bsrv.main:app", reload=True, log_level="debug")
     else:
