@@ -167,3 +167,4 @@ projects/
 test.py
 /test.db
 start.sh
+setup.sh
