@@ -159,6 +159,19 @@ class DBM:
             conn.commit()
         return uid
     
+    def get_all_users(self)-> list[dict[str, Any]]:
+        cur, conn = self.__cursor_and_connection()
+        with conn:
+            cur.execute("""SELECT * FROM users""")
+            result = cur.fetchall()
+        return [{"id": row[0],
+                 "username": row[1],
+                 "name": row[2],
+                 "email": row[3],
+                 "created_at": row[5],
+                 "is_admin": row[6],
+                 "is_banned": row[7]} for row in result]
+    
     def get_user_id(self, username: str) -> int:
         if not self.__does_username_exist(username):
             raise UserDoesntExist

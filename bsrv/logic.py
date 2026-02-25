@@ -31,5 +31,5 @@ def register_user(password, username, name, email):
         raise e
     return uid
 
-def get_user_id(username: str) -> int:
-    return dbm.get_user_id(username)
+def is_admin(user_id: int) -> bool:
+    return dbm.get_user(user_id)["is_admin"]
