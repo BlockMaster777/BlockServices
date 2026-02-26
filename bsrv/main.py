@@ -31,10 +31,12 @@ JWT_SECRET = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
 TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES"))
 
 app = fastapi.FastAPI(title="BlockServices",
-                      description="BlockServices API and alternative Scratch API for Dashblocks.",
+                      description="BlockServices API and alternative Scratch API for Dashblocks",
                       version="0.3.0",
                       docs_url="/",
-                      redoc_url="/docs")
+                      redoc_url="/docs",
+                      license_info={"name": "GPL-3.0"},
+                      copyright_holder="BlockMaster777")
 
 limiter = slowapi.Limiter(key_func=slowapi.util.get_remote_address, default_limits=["60/minute"],
                           storage_uri="memory://")
@@ -139,17 +141,6 @@ async def login(user: UserLogin, request: Request):
         return JWTResponse(access_token=access_token, token_type="Bearer")
     else:
         raise fastapi.HTTPException(status_code=400, detail="Incorrect username or password")
-
-
-@app.get("/dash/auth/whoami", summary="JWT verifying", response_model=UIDResponse,
-         responses={400: {"description": "Incorrect username or password"}})
-async def whoami(request: Request, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
-    try:
-        token = credentials.credentials
-        uid = await get_current_user(token)
-    except InvalidTokenError:
-        raise fastapi.HTTPException(status_code=400, detail="Incorrect username or password")
-    return UIDResponse(uid=uid)
 
 
 @app.get("/dash/user/{username}",  summary="Public information about user", response_model=PublicUserData)
