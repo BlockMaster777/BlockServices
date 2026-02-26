@@ -4,9 +4,13 @@ import os
 import secrets
 
 import fastapi
+import slowapi.errors
+import slowapi.middleware
+import slowapi.util
 from dotenv import load_dotenv
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
 
@@ -23,13 +27,22 @@ logging.basicConfig(level=logging.INFO,
                         ])
 logger = logging.getLogger(__name__)
 
-SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
+JWT_SECRET = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
+TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES"))
 
 app = fastapi.FastAPI(title="BlockServices",
                       description="BlockServices API and alternative Scratch API for Dashblocks.",
                       version="0.3.0",
                       docs_url="/",
                       redoc_url="/docs")
+
+limiter = slowapi.Limiter(key_func=slowapi.util.get_remote_address, default_limits=["60/minute"],
+                          storage_uri="memory://")
+
+app.state.limiter = limiter
+app.add_middleware(slowapi.middleware.SlowAPIMiddleware)
+app.add_exception_handler(slowapi.errors.RateLimitExceeded,
+                          slowapi._rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -91,7 +104,7 @@ async def get_current_user(token) ->  int:
             detail="Could not validate credentials"
             )
     try:
-        uid = lg.get_uid_from_token(token, SECRET_KEY)
+        uid = await lg.get_uid_from_token(token, JWT_SECRET)
         if uid is None:
             raise credentials_exception
     except InvalidTokenError:
@@ -101,10 +114,11 @@ async def get_current_user(token) ->  int:
 
 @app.post("/dash/auth/register", summary="Register new user. After that you need to get JWT token via logining in.",
           response_model=UIDResponse, responses={400: {"description": "User already exists"}}, status_code=201)
-async def register(user: UserCreate):
+@limiter.limit("5/minute")
+async def register(user: UserCreate, request: Request):
     logger.log(20, f"Register start {user.username}, {user.name}, {user.email}, {user.password}")
     try:
-        uid = lg.register_user(user.password, user.username, user.name, user.email)
+        uid = await lg.register_user(user.password, user.username, user.name, user.email)
     except UserAlreadyExists:
         raise fastapi.HTTPException(status_code=400, detail="User already exists")
     return UIDResponse(uid=uid)
@@ -112,14 +126,15 @@ async def register(user: UserCreate):
 
 @app.post("/dash/auth/login", summary="Login into account. Needs username and password. Returns JWT token.",
           response_model=JWTResponse, responses={400: {"description": "Incorrect username or password"}})
-async def login(user: UserLogin):
+@limiter.limit("5/minute")
+async def login(user: UserLogin, request: Request):
     logger.log(20, f"Login start {user.username}")
-    if lg.check_password(user.password, user.username):
+    if await lg.check_password(user.password, user.username):
         try:
             uid = lg.dbm.get_user_id(user.username)
         except UserDoesntExist:
             raise fastapi.HTTPException(status_code=400, detail="User doesn't exist")
-        access_token = lg.create_access_token({"uid": uid}, int(os.getenv("TOKEN_EXPIRE_MINUTES")), SECRET_KEY)
+        access_token = await lg.create_access_token({"uid": uid}, TOKEN_EXPIRE_MINUTES, JWT_SECRET)
         logger.log(20, f"Issued JWT token for {user.username} with id {uid}")
         return JWTResponse(access_token=access_token, token_type="Bearer")
     else:
@@ -128,7 +143,7 @@ async def login(user: UserLogin):
 
 @app.get("/dash/auth/whoami", summary="JWT verifying", response_model=UIDResponse,
          responses={400: {"description": "Incorrect username or password"}})
-async def whoami(credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
+async def whoami(request: Request, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
     try:
         token = credentials.credentials
         uid = await get_current_user(token)
@@ -138,7 +153,7 @@ async def whoami(credentials: HTTPAuthorizationCredentials = fastapi.Depends(sec
 
 
 @app.get("/dash/user/{username}",  summary="Public information about user", response_model=PublicUserData)
-async def get_user(username: str):
+async def get_user(username: str, request: Request):
      try:
          uid = lg.dbm.get_user_id(username)
          result = lg.dbm.get_user(uid)
@@ -150,7 +165,7 @@ async def get_user(username: str):
 
 @app.get("/dash/account", summary="All information about you", response_model=UserDataResponse,
          responses={400: {"description": "Incorrect token"}})
-async def account(credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
+async def account(request: Request, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
     try:
         token = credentials.credentials
         uid = await get_current_user(token)
@@ -163,10 +178,10 @@ async def account(credentials: HTTPAuthorizationCredentials = fastapi.Depends(se
 
 @app.get("/dash/users", summary="List of all users. Admins only.", response_model=list[UserDataResponse],
          responses={400: {"description": "Incorrect token"}, 403: {"description": "Not admin"}})
-async def get_users(credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
+async def get_users(request: Request, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
     try:
         token = credentials.credentials
-        is_adm = lg.is_admin(await get_current_user(token))
+        is_adm = await lg.is_admin(await get_current_user(token))
     except (InvalidTokenError, UserDoesntExist):
         raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
     if not is_adm:

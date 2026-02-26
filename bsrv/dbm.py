@@ -76,19 +76,19 @@ class DBM:
     def __does_project_exist(self, project_id: int) -> bool:
         cur, conn = self.__cursor_and_connection()
         with conn:
-            cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
+            cur.execute("""SELECT * FROM projects WHERE id = ?;""", (project_id,))
             return bool(cur.fetchone())
     
     def __does_user_exist(self, user_id: int) -> bool:
         cur, conn = self.__cursor_and_connection()
         with conn:
-            cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
+            cur.execute("""SELECT * FROM users WHERE id = ?;""", (user_id,))
             return bool(cur.fetchone())
     
     def __does_username_exist(self, username: str) -> bool:
         cur, conn = self.__cursor_and_connection()
         with conn:
-            cur.execute("""SELECT * FROM users WHERE username = ?""", (username,))
+            cur.execute("""SELECT * FROM users WHERE username = ?;""", (username,))
             return bool(cur.fetchone())
 
     def get_project(self, project_id: int) -> dict[str, Any]:
@@ -96,13 +96,13 @@ class DBM:
             raise ProjectDoesntExist
         cur, conn = self.__cursor_and_connection()
         with conn:
-            cur.execute("""SELECT * FROM projects WHERE id = ?""", (project_id,))
+            cur.execute("""SELECT * FROM projects WHERE id = ?;""", (project_id,))
             result = cur.fetchone()
             cur.execute("""SELECT COUNT(*) FROM reactions
-                               WHERE project_id = ? AND type = ?""", (project_id, "like"))
+                               WHERE project_id = ? AND type = ?;""", (project_id, "like"))
             likes = cur.fetchone()[0]
             cur.execute("""SELECT COUNT(*) FROM reactions
-                               WHERE project_id = ? AND type = ?""", (project_id, "fav"))
+                               WHERE project_id = ? AND type = ?;""", (project_id, "fav"))
             favorites = cur.fetchone()[0]
             file = base64.encodebytes(self.__read_from_file(project_id))
         return {"id": result[0],
@@ -120,7 +120,7 @@ class DBM:
             raise UserDoesntExist
         cur, conn = self.__cursor_and_connection()
         with conn:
-            cur.execute("""SELECT * FROM users WHERE id = ?""", (user_id,))
+            cur.execute("""SELECT * FROM users WHERE id = ?;""", (user_id,))
             result = cur.fetchone()
         return {"id": result[0],
                 "username": result[1],
@@ -162,7 +162,7 @@ class DBM:
     def get_all_users(self)-> list[dict[str, Any]]:
         cur, conn = self.__cursor_and_connection()
         with conn:
-            cur.execute("""SELECT * FROM users""")
+            cur.execute("""SELECT * FROM users;""")
             result = cur.fetchall()
         return [{"id": row[0],
                  "username": row[1],
@@ -177,9 +177,18 @@ class DBM:
             raise UserDoesntExist
         cur, conn = self.__cursor_and_connection()
         with conn:
-            cur.execute("""SELECT id FROM users WHERE username = ?""", (username,))
+            cur.execute("""SELECT id FROM users WHERE username = ?;""", (username,))
             uid = cur.fetchone()[0]
         return uid
     
-    def get_user_psw_by_username(self, username: str) -> int:
+    def get_user_psw_by_username(self, username: str) -> str:
         return self.get_user(self.get_user_id(username))["password_hash"]
+    
+    def edit_password(self, uid: int, new_password: str):
+        if not self.__does_user_exist(uid):
+            raise UserDoesntExist
+        cur, conn = self.__cursor_and_connection()
+        with conn:
+            cur.execute("BEGIN TRANSACTION;")
+            cur.execute("UPDATE users SET password_hash = ? WHERE id = ?;", (new_password, uid))
+            conn.commit()
