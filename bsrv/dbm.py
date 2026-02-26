@@ -104,7 +104,7 @@ class DBM:
             cur.execute("""SELECT COUNT(*) FROM reactions
                                WHERE project_id = ? AND type = ?;""", (project_id, "fav"))
             favorites = cur.fetchone()[0]
-            file = str(base64.b64encode(self.__read_from_file(project_id)))
+            file = base64.b64encode(self.__read_from_file(project_id)).decode()
         return {"id": result[0],
                 "name": result[1],
                 "description": result[2],
