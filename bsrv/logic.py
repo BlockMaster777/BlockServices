@@ -52,3 +52,11 @@ async def register_user(password, username, name, email):
 
 async def is_admin(user_id: int) -> bool:
     return dbm.get_user(user_id)["is_admin"]
+
+async def promote_user(username: str):
+    uid = dbm.get_user_id(username)
+    dbm.change_user_admin_status(uid, True)
+    
+async def demote_user(username: str):
+    uid = dbm.get_user_id(username)
+    dbm.change_user_admin_status(uid, False)

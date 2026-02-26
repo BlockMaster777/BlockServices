@@ -72,6 +72,10 @@ class UserLogin(BaseModel):
     password: str
 
 
+class Username(BaseModel):
+    username: str
+
+
 class UIDResponse(BaseModel):
     uid: int = Field(description="Unique user id", examples=[1, 2, 3])
 
@@ -108,13 +112,15 @@ async def get_current_user(token) ->  int:
     try:
         uid = await lg.get_uid_from_token(token, JWT_SECRET)
         if uid is None:
+            print("No uid")
             raise credentials_exception
     except InvalidTokenError:
+        print("Wrong token")
         raise credentials_exception
     return int(uid)
 
 
-@app.post("/dash/auth/register", summary="Register new user. After that you need to get JWT token via logining in.",
+@app.post("/dash/auth/register", summary="Register new user",
           response_model=UIDResponse, responses={400: {"description": "User already exists"}}, status_code=201)
 @limiter.limit("5/minute")
 async def register(user: UserCreate, request: Request):
@@ -126,7 +132,7 @@ async def register(user: UserCreate, request: Request):
     return UIDResponse(uid=uid)
 
 
-@app.post("/dash/auth/login", summary="Login into account. Needs username and password. Returns JWT token.",
+@app.post("/dash/auth/login", summary="Login into account",
           response_model=JWTResponse, responses={400: {"description": "Incorrect username or password"}})
 @limiter.limit("5/minute")
 async def login(user: UserLogin, request: Request):
@@ -167,7 +173,7 @@ async def account(request: Request, credentials: HTTPAuthorizationCredentials = 
                             created_at=result["created_at"], is_admin=result["is_admin"], is_banned=result["is_banned"])
 
 
-@app.get("/dash/users", summary="List of all users. Admins only.", response_model=list[UserDataResponse],
+@app.get("/dash/users", summary="List of all users. Admins only", response_model=list[UserDataResponse],
          responses={400: {"description": "Incorrect token"}, 403: {"description": "Not admin"}})
 async def get_users(request: Request, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
     try:
@@ -181,7 +187,36 @@ async def get_users(request: Request, credentials: HTTPAuthorizationCredentials 
     return [UserDataResponse(id=user["id"], username=user["username"], name=user["name"], email=user["email"],
                            is_banned=user["is_banned"], created_at=user["created_at"], is_admin=user["is_admin"])
                            for user in users]
+
+
+@app.post("/dash/promote", summary="Promote a user. Admins only")
+async def promote(username: Username, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
+    try:
+        token = credentials.credentials
+        is_adm = await lg.is_admin(await get_current_user(token))
+    except (InvalidTokenError, UserDoesntExist):
+        raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
+    if not is_adm:
+        raise fastapi.HTTPException(status_code=403, detail="Not admin")
+    try:
+        await lg.promote_user(username.username)
+    except UserDoesntExist:
+        raise fastapi.HTTPException(status_code=400, detail="User doesn't exist")
     
+
+@app.post("/dash/demote", summary="Demote a user. Admins only")
+async def promote(username: Username, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
+    try:
+        token = credentials.credentials
+        is_adm = await lg.is_admin(await get_current_user(token))
+    except (InvalidTokenError, UserDoesntExist):
+        raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
+    if not is_adm:
+        raise fastapi.HTTPException(status_code=403, detail="Not admin")
+    try:
+        await lg.demote_user(username.username)
+    except UserDoesntExist:
+        raise fastapi.HTTPException(status_code=400, detail="User doesn't exist")
 
 
 @app.get("/robots.txt")

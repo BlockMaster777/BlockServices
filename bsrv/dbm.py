@@ -192,3 +192,12 @@ class DBM:
             cur.execute("BEGIN TRANSACTION;")
             cur.execute("UPDATE users SET password_hash = ? WHERE id = ?;", (new_password, uid))
             conn.commit()
+    
+    def change_user_admin_status(self, uid: int, status: bool):
+        if not self.__does_user_exist(uid):
+            raise UserDoesntExist
+        cur, conn = self.__cursor_and_connection()
+        with conn:
+            cur.execute("BEGIN TRANSACTION;")
+            cur.execute("UPDATE users SET is_admin = ? WHERE id = ?;", (status, uid))
+            conn.commit()
