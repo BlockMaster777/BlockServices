@@ -2,6 +2,7 @@
 import logging
 import os
 import secrets
+from typing import Optional
 
 import fastapi
 import slowapi.errors
@@ -15,7 +16,7 @@ from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
 
 import bsrv.logic as lg
-from bsrv.dbm import UserAlreadyExists, UserDoesntExist
+from bsrv.dbm import UserAlreadyExists, UserDoesntExist, ProjectDoesntExist
 
 load_dotenv()
 
@@ -54,7 +55,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"]
 )
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 class UserCreate(BaseModel):
@@ -70,10 +71,6 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     username: str = Field(description="Unique username")
     password: str
-
-
-class Username(BaseModel):
-    username: str
 
 
 class UIDResponse(BaseModel):
@@ -104,6 +101,22 @@ class UserDataResponse(BaseModel):
     is_banned: bool = Field(description="Is user banned")
 
 
+class ProjectCreate(BaseModel):
+    name: str = Field(description="Project name")
+    description: str = Field(description="Project description")
+    file: str = Field(description="Project file in base64 format")
+    is_public: bool = Field(description="Is project public", examples=[True, False])
+
+
+class ProjectData(BaseModel):
+    name: str = Field(description="Project name")
+    description: str = Field(description="Project description")
+    author: str = Field(description="Project author")
+    file: str = Field(description="Project file in base64 format")
+    created_at: str = Field(description="Project creation date")
+    is_public: bool = Field(description="Is project public", examples=[True, False])
+
+
 async def get_current_user(token) ->  int:
     credentials_exception = fastapi.HTTPException(
             status_code=fastapi.status.HTTP_401_UNAUTHORIZED,
@@ -120,9 +133,11 @@ async def get_current_user(token) ->  int:
     return int(uid)
 
 
-@app.post("/dash/auth/register", summary="Register new user",
-          response_model=UIDResponse, responses={400: {"description": "User already exists"}}, status_code=201)
-@limiter.limit("5/minute")
+@app.post("/dash/auth/register",
+          summary="Register new user",
+          response_model=UIDResponse,
+          responses={400: {"description": "User already exists"}}, status_code=201)
+@limiter.limit("1/minute")
 async def register(user: UserCreate, request: Request):
     logger.log(20, f"Register start {user.username}, {user.name}, {user.email}, {user.password}")
     try:
@@ -132,8 +147,10 @@ async def register(user: UserCreate, request: Request):
     return UIDResponse(uid=uid)
 
 
-@app.post("/dash/auth/login", summary="Login into account",
-          response_model=JWTResponse, responses={400: {"description": "Incorrect username or password"}})
+@app.post("/dash/auth/login",
+          summary="Login into account",
+          response_model=JWTResponse,
+          responses={400: {"description": "Incorrect username or password"}})
 @limiter.limit("5/minute")
 async def login(user: UserLogin, request: Request):
     logger.log(20, f"Login start {user.username}")
@@ -142,6 +159,8 @@ async def login(user: UserLogin, request: Request):
             uid = lg.dbm.get_user_id(user.username)
         except UserDoesntExist:
             raise fastapi.HTTPException(status_code=400, detail="User doesn't exist")
+        if lg.dbm.get_user(uid)["is_banned"]:
+            raise fastapi.HTTPException(status_code=403, detail="You are banned")
         access_token = await lg.create_access_token({"uid": uid}, TOKEN_EXPIRE_MINUTES, JWT_SECRET)
         logger.log(20, f"Issued JWT token for {user.username} with id {uid}")
         return JWTResponse(access_token=access_token, token_type="Bearer")
@@ -160,26 +179,31 @@ async def get_user(username: str, request: Request):
                            is_banned=result["is_banned"], created_at=result["created_at"], is_admin=result["is_admin"])
 
 
-@app.get("/dash/account", summary="All information about you", response_model=UserDataResponse,
+@app.get("/dash/user", summary="All information about you", response_model=UserDataResponse,
          responses={400: {"description": "Incorrect token"}})
 async def account(request: Request, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
     try:
         token = credentials.credentials
         uid = await get_current_user(token)
         result = lg.dbm.get_user(uid)
-    except (InvalidTokenError, UserDoesntExist):
+    except (InvalidTokenError, UserDoesntExist, AttributeError):
         raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
     return UserDataResponse(id=result["id"], username=result["username"], name=result["name"], email=result["email"],
                             created_at=result["created_at"], is_admin=result["is_admin"], is_banned=result["is_banned"])
 
 
-@app.get("/dash/users", summary="List of all users. Admins only", response_model=list[UserDataResponse],
-         responses={400: {"description": "Incorrect token"}, 403: {"description": "Not admin"}})
+@app.get("/dash/user/all",
+         summary="List of all users. Admins only",
+         response_model=list[UserDataResponse],
+         responses={
+             400: {"description": "Incorrect token"},
+             403: {"description": "Not admin"}
+             })
 async def get_users(request: Request, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
     try:
         token = credentials.credentials
         is_adm = await lg.is_admin(await get_current_user(token))
-    except (InvalidTokenError, UserDoesntExist):
+    except (InvalidTokenError, UserDoesntExist, AttributeError):
         raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
     if not is_adm:
         raise fastapi.HTTPException(status_code=403, detail="Not admin")
@@ -189,34 +213,91 @@ async def get_users(request: Request, credentials: HTTPAuthorizationCredentials 
                            for user in users]
 
 
-@app.post("/dash/promote", summary="Promote a user. Admins only")
-async def promote(username: Username, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
+@app.post("/dash/user/{username}/promote",
+          summary="Promote a user. Admins only",
+          responses={
+              400: {"description": "Incorrect token"},
+              403: {"description": "Not admin"},
+              404: {"description": "User not found"}
+              },
+          status_code=201)
+async def promote(username: str, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
     try:
         token = credentials.credentials
         is_adm = await lg.is_admin(await get_current_user(token))
-    except (InvalidTokenError, UserDoesntExist):
+    except (InvalidTokenError, UserDoesntExist, AttributeError):
         raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
     if not is_adm:
         raise fastapi.HTTPException(status_code=403, detail="Not admin")
     try:
-        await lg.promote_user(username.username)
+        await lg.promote_user(username)
     except UserDoesntExist:
-        raise fastapi.HTTPException(status_code=400, detail="User doesn't exist")
-    
+        raise fastapi.HTTPException(status_code=404, detail="User doesn't exist")
 
-@app.post("/dash/demote", summary="Demote a user. Admins only")
-async def promote(username: Username, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
+
+@app.post(
+    "/dash/user/{username}/demote",
+    summary="Demote a user. Admins only",
+    responses={
+        400: {"description": "Incorrect token"},
+        403: {"description": "Not admin"},
+        404: {"description": "User not found"},
+        },
+    status_code=201,
+)
+async def demote(username: str, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
     try:
         token = credentials.credentials
         is_adm = await lg.is_admin(await get_current_user(token))
-    except (InvalidTokenError, UserDoesntExist):
+    except (InvalidTokenError, UserDoesntExist, AttributeError):
         raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
     if not is_adm:
         raise fastapi.HTTPException(status_code=403, detail="Not admin")
     try:
-        await lg.demote_user(username.username)
+        await lg.demote_user(username)
     except UserDoesntExist:
-        raise fastapi.HTTPException(status_code=400, detail="User doesn't exist")
+        raise fastapi.HTTPException(status_code=404, detail="User doesn't exist")
+
+
+@app.post("/dash/project",
+          summary="Upload new project to cloud",
+          responses={400: {"description": "Incorrect token"}},
+          status_code=201)
+async def save_project(data: ProjectCreate, credentials: HTTPAuthorizationCredentials = fastapi.Depends(security)):
+    try:
+        token = credentials.credentials
+        uid = await get_current_user(token)
+    except (InvalidTokenError, UserDoesntExist, AttributeError):
+        raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
+    return await lg.load_project(uid, data.name, data.description, data.file, data.is_public)
+
+
+@app.get("/dash/project/{pid}",
+         summary="Get project from cloud",
+         responses={
+             400: {"description": "Incorrect token"},
+             403: {"description": "Private project"},
+             404: {"description": "Project not found"}
+             },
+         response_model=ProjectData)
+async def get_project(pid: int, credentials: Optional[HTTPAuthorizationCredentials] = fastapi.Depends(security)):
+    try:
+        if credentials is None:
+            uid = -1
+        else:
+            token = credentials.credentials
+            uid = await get_current_user(token)
+    except (InvalidTokenError, UserDoesntExist):
+        raise fastapi.HTTPException(status_code=400, detail="Incorrect token")
+    try:
+        data = await lg.get_project(pid)
+    except ProjectDoesntExist:
+        raise fastapi.HTTPException(status_code=404, detail="Project doesn't exist")
+    if data["is_public"] or data["uid"] == uid:
+        return ProjectData(name=data["name"], description=data["description"], file=data["file"],
+                           author=data["author"], created_at=data["created_at"], is_public=data["is_public"])
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="Private project")
 
 
 @app.get("/robots.txt")

@@ -53,10 +53,27 @@ async def register_user(password, username, name, email):
 async def is_admin(user_id: int) -> bool:
     return dbm.get_user(user_id)["is_admin"]
 
+
 async def promote_user(username: str):
     uid = dbm.get_user_id(username)
     dbm.change_user_admin_status(uid, True)
     
+    
 async def demote_user(username: str):
     uid = dbm.get_user_id(username)
     dbm.change_user_admin_status(uid, False)
+
+
+async def load_project(uid: int, name: str, description: str, file: str, is_public: bool) -> int:
+    return dbm.add_project(name, description, uid, file, is_public)
+
+
+async def get_project(pid: int) -> dict:
+    data =  dbm.get_project(pid)
+    return {"name": data["name"],
+            "description": data["description"],
+            "author": dbm.get_user(data["author_id"])["username"],
+            "uid": data["author_id"],
+            "file": data["file"],
+            "created_at": data["created_at"],
+            "is_public": data["is_public"]}

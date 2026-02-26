@@ -104,7 +104,7 @@ class DBM:
             cur.execute("""SELECT COUNT(*) FROM reactions
                                WHERE project_id = ? AND type = ?;""", (project_id, "fav"))
             favorites = cur.fetchone()[0]
-            file = base64.encodebytes(self.__read_from_file(project_id))
+            file = str(base64.b64encode(self.__read_from_file(project_id)))
         return {"id": result[0],
                 "name": result[1],
                 "description": result[2],
@@ -128,18 +128,21 @@ class DBM:
                 "email": result[3],
                 "password_hash": result[4],
                 "created_at": result[5],
-                "is_admin": result[6],
-                "is_banned": result[7]}
+                "is_admin": bool(result[6]),
+                "is_banned": bool(result[7])}
 
-    def add_project(self, name: str, description: str, author_id: int, file)-> int:
+    def add_project(self, name: str, description: str, author_id: int, file: str, is_public: bool)-> int:
+        if not self.__does_user_exist(author_id):
+            raise UserDoesntExist
         cur, conn = self.__cursor_and_connection()
         with conn:
             cur.execute("BEGIN TRANSACTION")
-            cur.execute("INSERT INTO projects(name, description, author_id) VALUES (?, ?, ?) RETURNING id;",
-                           (name, description, author_id))
+            cur.execute("INSERT INTO projects(name, description, author_id, is_public) VALUES (?, ?, ?, ?) RETURNING "
+                        "id;",
+                           (name, description, author_id, is_public))
             pid = cur.fetchone()[0]
             try:
-                self.__write_to_file(pid, file)
+                self.__write_to_file(pid, base64.b64decode(file))
             except Exception as e:
                 conn.rollback()
                 raise e
